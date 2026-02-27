@@ -78,6 +78,18 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["task_id"],
             },
         ),
+        types.Tool(
+            name="search_tasks",
+            description="Tìm kiếm task theo tiêu đề, trạng thái hoặc thời gian",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Từ khóa tìm kiếm trong tiêu đề"},
+                    "status": {"type": "string", "enum": ["todo", "in_progress", "done"], "description": "Lọc theo trạng thái"},
+                    "days": {"type": "integer", "description": "Tìm các task được tạo trong vòng N ngày qua"}
+                }
+            },
+        ),
     ]
 
 @server.call_tool()
@@ -110,9 +122,8 @@ async def handle_call_tool(
             
             formatted_tasks = []
             for t in tasks:
-                task = TaskModel(**t)
-                status_icon = "✅" if task.status == TaskStatus.DONE else "⏳"
-                formatted_tasks.append(f"- [{status_icon}] {task.title} (ID: {task.id})")
+                status_icon = "✅" if t.get("status") == TaskStatus.DONE else "⏳"
+                formatted_tasks.append(f"- [{status_icon}] {t.get('title', 'Không tên')} (ID: {t['_id']})")
             
             return [types.TextContent(type="text", text="\n".join(formatted_tasks))]
 
@@ -165,6 +176,38 @@ async def handle_call_tool(
             if result.matched_count > 0:
                 return [types.TextContent(type="text", text=f"Đã cập nhật task {task_id} thành công.")]
             return [types.TextContent(type="text", text=f"Không tìm thấy task với ID: {task_id}")]
+
+        elif name == "search_tasks":
+            query_filter = {}
+            
+            # Tìm theo từ khóa trong tiêu đề
+            keyword = arguments.get("query")
+            if keyword:
+                query_filter["title"] = {"$regex": keyword, "$options": "i"}
+            
+            # Lọc theo trạng thái
+            status = arguments.get("status")
+            if status:
+                query_filter["status"] = status
+                
+            # Lọc theo thời gian
+            days = arguments.get("days")
+            if days is not None:
+                since = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+                query_filter["created_at"] = {"$gte": since}
+            
+            tasks_cursor = collection.find(query_filter)
+            tasks = await tasks_cursor.to_list(length=100)
+            
+            if not tasks:
+                return [types.TextContent(type="text", text="Không tìm thấy task nào khớp với tiêu chí tìm kiếm.")]
+            
+            formatted_tasks = []
+            for t in tasks:
+                status_icon = "✅" if t.get("status") == TaskStatus.DONE else "⏳"
+                formatted_tasks.append(f"- [{status_icon}] {t.get('title', 'Không tên')} (ID: {t['_id']})")
+            
+            return [types.TextContent(type="text", text=f"Đã tìm thấy {len(tasks)} task:\n" + "\n".join(formatted_tasks))]
 
         else:
             raise ValueError(f"Không tìm thấy công cụ: {name}")
