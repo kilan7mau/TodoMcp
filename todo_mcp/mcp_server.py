@@ -1,4 +1,5 @@
 import logging
+import datetime
 import mcp.types as types
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
@@ -64,6 +65,19 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["task_id"],
             },
         ),
+        types.Tool(
+            name="update_task",
+            description="Cập nhật tiêu đề hoặc trạng thái của một task bằng ID",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "ID của task (ObjectId)"},
+                    "title": {"type": "string", "description": "Tiêu đề mới của task (tùy chọn)"},
+                    "status": {"type": "string", "enum": ["todo", "in_progress", "done"], "description": "Trạng thái mới của task (tùy chọn)"}
+                },
+                "required": ["task_id"],
+            },
+        ),
     ]
 
 @server.call_tool()
@@ -109,7 +123,7 @@ async def handle_call_tool(
             
             result = await collection.update_one(
                 {"_id": ObjectId(task_id)},
-                {"$set": {"status": TaskStatus.DONE, "updated_at": TaskModel().updated_at}}
+                {"$set": {"status": TaskStatus.DONE, "updated_at": datetime.datetime.utcnow()}}
             )
             
             if result.modified_count > 0:
@@ -125,6 +139,31 @@ async def handle_call_tool(
             
             if result.deleted_count > 0:
                 return [types.TextContent(type="text", text=f"Đã xóa task {task_id} thành công.")]
+            return [types.TextContent(type="text", text=f"Không tìm thấy task với ID: {task_id}")]
+
+        elif name == "update_task":
+            task_id = arguments.get("task_id")
+            if not task_id:
+                raise ValueError("Thiếu task_id")
+            
+            update_data = {}
+            if "title" in arguments:
+                update_data["title"] = arguments["title"]
+            if "status" in arguments:
+                update_data["status"] = arguments["status"]
+            
+            if not update_data:
+                return [types.TextContent(type="text", text="Không có dữ liệu cập nhật nào được cung cấp.")]
+            
+            update_data["updated_at"] = datetime.datetime.utcnow()
+            
+            result = await collection.update_one(
+                {"_id": ObjectId(task_id)},
+                {"$set": update_data}
+            )
+            
+            if result.matched_count > 0:
+                return [types.TextContent(type="text", text=f"Đã cập nhật task {task_id} thành công.")]
             return [types.TextContent(type="text", text=f"Không tìm thấy task với ID: {task_id}")]
 
         else:
